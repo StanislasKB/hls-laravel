@@ -201,4 +201,5 @@ jobs:
             -e "certbot_enabled=${{ vars.CERTBOT_ENABLED }}"
         env:
           ANSIBLE_HOST_KEY_CHECKING: "False"
-          ANSIBLE_STDOUT_CALLBACK: "yaml"
+          ANSIBLE_STDOUT_CALLBACK: "default"
+          ANSIBLE_CALLBACK_RESULT_FORMAT: "yaml"
