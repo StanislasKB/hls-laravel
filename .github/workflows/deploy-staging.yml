@@ -187,7 +187,7 @@ jobs:
           ansible-playbook \
             -i inventory/staging/hosts.ini \
             playbooks/deploy.yml \
-            -e "vault_github_token=${{ secrets.GITHUB_TOKEN }}" \
+            -e "vault_github_token=${{ secrets.GIT_TOKEN }}" \
             -e "vault_laravel_app_key=${{ secrets.LARAVEL_APP_KEY }}" \
             -e "vault_db_password=${{ secrets.DB_PASSWORD }}" \
             -e "vault_db_root_password=${{ secrets.DB_ROOT_PASSWORD }}" \
