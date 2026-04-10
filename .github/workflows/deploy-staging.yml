@@ -34,8 +34,8 @@ jobs:
       - name: Install Composer dependencies
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
 
-      # - name: Install Pest
-      #   run: composer require pestphp/pest --dev --no-interaction
+      - name: Install Pest
+        run: composer require pestphp/pest --dev --no-interaction
 
       - name: Copy .env
         run: cp .env.example .env.testing
