@@ -39,10 +39,14 @@ jobs:
 
     - name: Configure test environment
       run: |
-        echo "APP_ENV=testing"      >> .env.testing
-        echo "APP_KEY="             >> .env.testing
-        echo "DB_CONNECTION=sqlite" >> .env.testing
-        echo "DB_DATABASE=:memory:" >> .env.testing
+        echo "APP_ENV=testing"           >> .env.testing
+        echo "APP_KEY="                  >> .env.testing
+        echo "DB_CONNECTION=sqlite"      >> .env.testing
+        echo "DB_DATABASE=:memory:"      >> .env.testing
+        echo "SESSION_DRIVER=array"      >> .env.testing
+        echo "CACHE_STORE=array"         >> .env.testing
+        echo "QUEUE_CONNECTION=sync"     >> .env.testing
+        echo "MAIL_MAILER=array"         >> .env.testing
 
     - name: Generate app key
       run: php artisan key:generate --env=testing
