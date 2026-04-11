@@ -66,6 +66,7 @@ jobs:
     outputs:
       web_public_ip: ${{ steps.tf_output.outputs.web_public_ip }}
       db_public_ip:  ${{ steps.tf_output.outputs.db_public_ip }}
+      db_private_ip: ${{ steps.tf_output.outputs.db_private_ip }}
 
     defaults:
       run:
@@ -111,11 +112,13 @@ jobs:
         run: |
           WEB_IP=$(terraform output -raw web_public_ip)
           DB_IP=$(terraform output -raw db_public_ip)
+          DB_PRIVATE_IP=$(terraform output -raw db_private_ip)
           echo "web_public_ip=$WEB_IP" >> $GITHUB_OUTPUT
           echo "db_public_ip=$DB_IP"   >> $GITHUB_OUTPUT
+          echo "db_private_ip=$DB_PRIVATE_IP" >> $GITHUB_OUTPUT
           echo " Web IP : $WEB_IP"
           echo " DB IP  : $DB_IP"
-
+      
   # Ansible
   ansible:
     name: Ansible Deploy
@@ -197,7 +200,7 @@ jobs:
             -e "vault_mail_password=${{ secrets.MAIL_PASSWORD }}" \
             -e "laravel_repo_owner=${{ secrets.LARAVEL_REPO_OWNER }}" \
             -e "laravel_repo_name=${{ secrets.LARAVEL_REPO_NAME }}" \
-            -e "db_host=${{ needs.terraform.outputs.db_public_ip }}" \
+            -e "db_host=${{ needs.terraform.outputs.db_private_ip }}" \
             -e "db_name=${{ vars.DB_NAME }}" \
             -e "db_username=${{ vars.DB_USERNAME }}" \
             -e "certbot_enabled=${{ vars.CERTBOT_ENABLED }}"
