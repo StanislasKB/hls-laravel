@@ -10,7 +10,7 @@ jobs:
   # Tests Laravel
 
   ci:
-    name: 🧪 Tests Laravel
+    name: Tests Laravel
     runs-on: ubuntu-latest
 
     steps:
