@@ -72,7 +72,7 @@ jobs:
       - name: Checkout Terraform repo
         uses: actions/checkout@v4
         with:
-          repository: your-org/infra-terraform
+          repository: StanislasKB/terraform
           token: ${{ secrets.PAT_TOKEN }}
 
       - name: Setup Terraform
@@ -127,7 +127,7 @@ jobs:
       - name: Checkout Ansible repo
         uses: actions/checkout@v4
         with:
-          repository: your-org/config-ansible
+          repository: StanislasKB/ansible
           token: ${{ secrets.PAT_TOKEN }}
 
       - name: Install Ansible
