@@ -1,0 +1,235 @@
+name: CI/CD Dev
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+
+  ci:
+    name: Tests Laravel
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Laravel repo
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: mbstring, pdo, pdo_sqlite, sqlite3, xml, bcmath, curl, zip, tokenizer
+          coverage: none
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: composer-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Copy .env
+        run: cp .env.example .env.testing
+
+      - name: Configure test environment
+        run: |
+          echo "APP_ENV=testing"           >> .env.testing
+          echo "APP_KEY="                  >> .env.testing
+          echo "DB_CONNECTION=sqlite"      >> .env.testing
+          echo "DB_DATABASE=:memory:"      >> .env.testing
+          echo "SESSION_DRIVER=array"      >> .env.testing
+          echo "CACHE_STORE=array"         >> .env.testing
+          echo "QUEUE_CONNECTION=sync"     >> .env.testing
+          echo "MAIL_MAILER=array"         >> .env.testing
+
+      - name: Generate app key
+        run: php artisan key:generate --env=testing
+
+      - name: Run migrations
+        run: php artisan migrate --env=testing --force
+
+      - name: Run tests
+        run: php artisan test --env=testing
+
+ 
+  terraform:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    needs: ci
+    environment: dev
+    outputs:
+      web_public_ip: ${{ steps.tf_output.outputs.web_public_ip }}
+      db_public_ip:  ${{ steps.tf_output.outputs.db_public_ip }}
+      db_private_ip: ${{ steps.tf_output.outputs.db_private_ip }}
+
+    defaults:
+      run:
+        working-directory: environments/dev
+
+    steps:
+      - name: Checkout Terraform repo
+        uses: actions/checkout@v4
+        with:
+          repository: StanislasKB/terraform
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.0"
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: |
+          terraform plan \
+            -var="ssh_public_key=${{ secrets.EC2_SSH_PUBLIC_KEY }}" \
+            -var="key_name=${{ secrets.EC2_KEY_NAME }}"
+
+      - name: Terraform Apply
+        run: |
+          terraform apply -auto-approve \
+            -var="ssh_public_key=${{ secrets.EC2_SSH_PUBLIC_KEY }}" \
+            -var="key_name=${{ secrets.EC2_KEY_NAME }}"
+
+      - name: Capture Terraform outputs
+        id: tf_output
+        run: |
+          WEB_IP=$(terraform output -raw web_public_ip)
+          DB_IP=$(terraform output -raw db_public_ip)
+          DB_PRIVATE_IP=$(terraform output -raw db_private_ip)
+          echo "web_public_ip=$WEB_IP"        >> $GITHUB_OUTPUT
+          echo "db_public_ip=$DB_IP"          >> $GITHUB_OUTPUT
+          echo "db_private_ip=$DB_PRIVATE_IP" >> $GITHUB_OUTPUT
+          echo "Web IP    : $WEB_IP"
+          echo "DB IP     : $DB_IP"
+          echo "DB Private: $DB_PRIVATE_IP"
+
+ 
+  ansible:
+    name: Ansible Deploy
+    runs-on: ubuntu-latest
+    needs: terraform
+    environment: dev
+
+    steps:
+      - name: Checkout Ansible repo
+        uses: actions/checkout@v4
+        with:
+          repository: StanislasKB/ansible
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Install Ansible
+        run: |
+          pip install ansible --quiet
+          ansible-galaxy collection install community.mysql community.general
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Wait for web instance to be reachable
+        run: |
+          echo "Waiting for web instance..."
+          for i in $(seq 1 15); do
+            if ssh -o StrictHostKeyChecking=no \
+                   -o ConnectTimeout=5 \
+                   -i ~/.ssh/id_ed25519 \
+                   ubuntu@${{ needs.terraform.outputs.web_public_ip }} \
+                   "echo ok" 2>/dev/null; then
+              echo "Web instance reachable"
+              break
+            fi
+            echo "Attempt $i/15 — waiting 10s..."
+            sleep 10
+          done
+
+      - name: Wait for db instance to be reachable
+        run: |
+          DEPLOY_MODE="${{ vars.DEPLOY_MODE }}"
+          if [ "$DEPLOY_MODE" != "allinone" ]; then
+            echo "Waiting for db instance..."
+            for i in $(seq 1 15); do
+              if ssh -o StrictHostKeyChecking=no \
+                     -o ConnectTimeout=5 \
+                     -i ~/.ssh/id_ed25519 \
+                     ubuntu@${{ needs.terraform.outputs.db_public_ip }} \
+                     "echo ok" 2>/dev/null; then
+                echo "DB instance reachable"
+                break
+              fi
+              echo "Attempt $i/15 — waiting 10s..."
+              sleep 10
+            done
+          else
+            echo "allinone mode — skipping db wait"
+          fi
+
+      - name: Generate Ansible inventory
+        run: |
+          DEPLOY_MODE="${{ vars.DEPLOY_MODE }}"
+          echo "Deploy mode: $DEPLOY_MODE"
+
+          if [ "$DEPLOY_MODE" = "allinone" ]; then
+            sed \
+              -e 's/__WEB_IP__/${{ needs.terraform.outputs.web_public_ip }}/g' \
+              inventory/dev/hosts-allinone.ini.tpl > inventory/dev/hosts.ini
+          else
+            sed \
+              -e 's/__WEB_IP__/${{ needs.terraform.outputs.web_public_ip }}/g' \
+              -e 's/__DB_IP__/${{ needs.terraform.outputs.db_public_ip }}/g' \
+              inventory/dev/hosts.ini.tpl > inventory/dev/hosts.ini
+          fi
+
+          echo "Generated inventory:"
+          cat inventory/dev/hosts.ini
+
+      - name: Set db_host and playbook
+        id: config
+        run: |
+          DEPLOY_MODE="${{ vars.DEPLOY_MODE }}"
+          if [ "$DEPLOY_MODE" = "allinone" ]; then
+            echo "db_host=127.0.0.1"                        >> $GITHUB_OUTPUT
+            echo "playbook=playbooks/deploy-allinone.yml"   >> $GITHUB_OUTPUT
+          else
+            echo "db_host=${{ needs.terraform.outputs.db_private_ip }}" >> $GITHUB_OUTPUT
+            echo "playbook=playbooks/deploy.yml"            >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run Ansible playbook
+        run: |
+          ansible-playbook \
+            -i inventory/dev/hosts.ini \
+            ${{ steps.config.outputs.playbook }} \
+            -e "vault_github_token=${{ secrets.GITHUB_TOKEN }}" \
+            -e "vault_laravel_app_key=${{ secrets.LARAVEL_APP_KEY }}" \
+            -e "vault_db_password=${{ secrets.DB_PASSWORD }}" \
+            -e "vault_db_root_password=${{ secrets.DB_ROOT_PASSWORD }}" \
+            -e "vault_certbot_email=${{ secrets.CERTBOT_EMAIL }}" \
+            -e "vault_mail_username=${{ secrets.MAIL_USERNAME }}" \
+            -e "vault_mail_password=${{ secrets.MAIL_PASSWORD }}" \
+            -e "laravel_repo_owner=${{ secrets.LARAVEL_REPO_OWNER }}" \
+            -e "laravel_repo_name=${{ secrets.LARAVEL_REPO_NAME }}" \
+            -e "db_host=${{ steps.config.outputs.db_host }}" \
+            -e "db_name=${{ vars.DB_NAME }}" \
+            -e "db_username=${{ vars.DB_USERNAME }}" \
+            -e "certbot_enabled=${{ vars.CERTBOT_ENABLED }}"
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+          ANSIBLE_STDOUT_CALLBACK: "default"
+          ANSIBLE_CALLBACK_RESULT_FORMAT: "yaml"
