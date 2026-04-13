@@ -226,6 +226,8 @@ jobs:
             -e "laravel_repo_owner=${{ secrets.LARAVEL_REPO_OWNER }}" \
             -e "laravel_repo_name=${{ secrets.LARAVEL_REPO_NAME }}" \
             -e "db_host=${{ steps.config.outputs.db_host }}" \
+            -e "db_name=${{ vars.DB_NAME }}" \
+            -e "db_username=${{ vars.DB_USERNAME }}" \
             -e "certbot_enabled=${{ vars.CERTBOT_ENABLED }}"
         env:
           ANSIBLE_HOST_KEY_CHECKING: "False"
